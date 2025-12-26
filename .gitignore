@@ -5,3 +5,4 @@ data/
 benchmarking_data/
 benchmarking/
 .env
+benchmarking.db
