@@ -4,13 +4,16 @@ import pandas as pd
 import click
 import threading
 import hashlib
+import queue
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from rich.console import Console
 from llm import LLM, AuthenticationError
+from database import Database
 
 console = Console()
+db = Database()
 
 
 def get_question_id(question_text):
@@ -26,16 +29,9 @@ def get_all_json_files(root_dir):
     return json_files
 
 
-def evaluate_question(
-    question_data,
-    student_model,
-    evaluator_models,
-    prompt_template,
-    evaluator_executor,
-    student_prompt_template,
-):
+def generate_answer(question_data, student_model, student_prompt_template):
+    """Generate student answer (producer function)"""
     question = question_data.get("question")
-    original_answer = question_data.get("solution")
     usage_records = []
 
     # Get student answer
@@ -50,17 +46,45 @@ def evaluate_question(
             student_usage["model"] = student_model.model_name
             student_usage["role"] = "student"
             usage_records.append(student_usage)
+
+        return {
+            "question_data": question_data,
+            "student_answer": student_answer,
+            "usage_records": usage_records,
+            "error": None,
+        }
     except AuthenticationError as e:
         error_msg = f"Authentication Error: {str(e)}"
         console.print(f"[bold red]{error_msg}[/bold red]")
         console.print(
             "[yellow]Hint: This usually means your API key is invalid or you have run out of credits on OpenRouter.[/yellow]"
         )
-        return {"error": error_msg}, []
+        return {"question_data": question_data, "error": error_msg, "usage_records": []}
     except Exception as e:
         error_msg = f"Student model error: {str(e)}"
         console.print(f"[red]{error_msg}[/red]")
-        return {"error": error_msg}, []
+        return {"question_data": question_data, "error": error_msg, "usage_records": []}
+
+
+def evaluate_answer(
+    answer_data,
+    evaluator_models,
+    prompt_template,
+    evaluator_executor,
+):
+    """Evaluate a generated answer (consumer function)"""
+    if answer_data.get("error"):
+        return {
+            "question_id": answer_data["question_data"]["question_id"],
+            "error": answer_data["error"],
+        }, answer_data["usage_records"]
+
+    question_data = answer_data["question_data"]
+    student_answer = answer_data["student_answer"]
+    usage_records = answer_data["usage_records"].copy()
+
+    question = question_data.get("question")
+    original_answer = question_data.get("solution")
 
     # Prepare evaluation prompt
     try:
@@ -103,7 +127,7 @@ def evaluate_question(
     for future in as_completed(future_to_model):
         model_name = future_to_model[future]
         res, usage = future.result()
-        evaluations[model_name] = res
+        evaluations[model_name] = {"result": res, "cost": usage.get("cost", 0.0)}
         if usage:
             usage_records.append(usage)
 
@@ -113,29 +137,6 @@ def evaluate_question(
         "original_answer": original_answer,
         "evaluations": evaluations,
     }, usage_records
-
-
-def load_existing_results(output_dir):
-    cache = {}
-    if not os.path.exists(output_dir):
-        return cache
-
-    for file in os.listdir(output_dir):
-        if file.endswith(".json"):
-            file_path = os.path.join(output_dir, file)
-            try:
-                with open(file_path, "r") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        for item in data:
-                            q_id = item.get("question_id")
-                            if q_id:
-                                cache[q_id] = item
-            except Exception as e:
-                console.print(
-                    f"[yellow]Warning: Could not load cache from {file_path}: {e}[/yellow]"
-                )
-    return cache
 
 
 @click.command()
@@ -156,7 +157,19 @@ def load_existing_results(output_dir):
     default="student_prompt.md",
     help="Path to student prompt template",
 )
-def main(models_csv, evaluators_csv, data_dir, prompt_file, student_prompt_file):
+@click.option(
+    "--class-level",
+    default=None,
+    help="Class/Level to evaluate (e.g., 'Class 10')",
+)
+def main(
+    models_csv,
+    evaluators_csv,
+    data_dir,
+    prompt_file,
+    student_prompt_file,
+    class_level,
+):
     # Check for API key
     if not os.getenv("OPENROUTER_API_KEY"):
         console.print(
@@ -223,6 +236,38 @@ def main(models_csv, evaluators_csv, data_dir, prompt_file, student_prompt_file)
         console.print(f"[bold red]Error initializing evaluator models:[/bold red] {e}")
         return
 
+    # Select Class/Level
+    available_classes = sorted(
+        [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
+    )
+
+    if not class_level:
+        console.print("[bold blue]Select Class/Level:[/bold blue]")
+        console.print("0. All Classes")
+        for i, cls in enumerate(available_classes):
+            console.print(f"{i + 1}. {cls}")
+        cls_idx = click.prompt("Enter class number", type=int, default=0) - 1
+        if cls_idx >= 0:
+            selected_data_dir = os.path.join(data_dir, available_classes[cls_idx])
+        else:
+            selected_data_dir = data_dir
+    else:
+        # Try to match class_level with available_classes
+        matches = [
+            cls for cls in available_classes if class_level.lower() in cls.lower()
+        ]
+        if matches:
+            if len(matches) > 1:
+                console.print(
+                    f"[yellow]Multiple matches for '{class_level}': {matches}. Using the first one: {matches[0]}[/yellow]"
+                )
+            selected_data_dir = os.path.join(data_dir, matches[0])
+        else:
+            console.print(
+                f"[red]Error: No match found for class/level '{class_level}'.[/red]"
+            )
+            return
+
     # Parallel Configuration
     student_workers = click.prompt(
         "How many parallel student instances do you want to run?", type=int, default=1
@@ -238,8 +283,8 @@ def main(models_csv, evaluators_csv, data_dir, prompt_file, student_prompt_file)
     with open(student_prompt_file, "r") as f:
         student_prompt_template = f.read()
 
-    # Get all questions
-    json_files = get_all_json_files(data_dir)
+    # Get all questions and populate database
+    json_files = get_all_json_files(selected_data_dir)
     all_questions = []
     for file_path in json_files:
         with open(file_path, "r") as f:
@@ -247,8 +292,22 @@ def main(models_csv, evaluators_csv, data_dir, prompt_file, student_prompt_file)
                 data = json.load(f)
                 if isinstance(data, list):
                     for item in data:
+                        q_text = item.get("question", "")
+                        q_id = get_question_id(q_text)
                         item["source_file"] = file_path
-                        item["question_id"] = get_question_id(item.get("question", ""))
+                        item["question_id"] = q_id
+
+                        # Add to database if not exists
+                        db.add_question(
+                            q_id,
+                            q_text,
+                            item.get("solution"),
+                            file_path,
+                            metadata={
+                                "subject": item.get("subject"),
+                                "topic": item.get("topic"),
+                            },
+                        )
                         all_questions.append(item)
             except Exception as e:
                 console.print(
@@ -256,6 +315,11 @@ def main(models_csv, evaluators_csv, data_dir, prompt_file, student_prompt_file)
                 )
 
     console.print(f"Found {len(all_questions)} questions in {len(json_files)} files.")
+
+    # Create a new run in the database
+    run_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    run_id = db.create_run(student_model_name, run_timestamp)
+    console.print(f"[bold green]Created benchmarking run ID: {run_id}[/bold green]")
 
     # Create output directory inside benchmarking folder
     benchmarking_dir = "benchmarking"
@@ -266,100 +330,273 @@ def main(models_csv, evaluators_csv, data_dir, prompt_file, student_prompt_file)
     )
     os.makedirs(output_dir, exist_ok=True)
 
-    # Load existing results for resume
-    cache = load_existing_results(output_dir)
-    if cache:
+    # Type 1: Cross-run cache - Fully completed evaluations from previous runs
+    cross_run_cache = db.get_cached_results(student_model_name)
+    initial_gen_cost = 0.0
+    initial_eval_cost = 0.0
+    if cross_run_cache:
         console.print(
-            f"[bold green]Found {len(cache)} existing results. Resuming...[/bold green]"
+            f"[bold green]Found {len(cross_run_cache)} fully evaluated results from previous runs (cross-run cache).[/bold green]"
+        )
+        for item in cross_run_cache.values():
+            initial_gen_cost += item.get("gen_cost", 0.0)
+            initial_eval_cost += item.get("eval_cost", 0.0)
+    else:
+        console.print(
+            f"[dim]No cross-run cache found for student model '{student_model_name}'.[/dim]"
         )
 
-    # Run evaluations
+    # Type 2: Same-run resume - Student answers generated in THIS run but not yet evaluated
+    unevaluated = db.get_unevaluated_answers(run_id)
+    unevaluated_map = {a["question_id"]: a for a in unevaluated}
+    if unevaluated:
+        console.print(
+            f"[bold yellow]Found {len(unevaluated)} generated answers pending evaluation in current run (resuming).[/bold yellow]"
+        )
+
+    # Run parallel generation and evaluation
     results = []
-    score_records = []
-    cost_records = []
     # Use a single filename for the whole run as requested: yyyymmddhhmmss.json
     timestamp_str = datetime.now().strftime("%Y%m%d%H%M%S")
     output_filename = timestamp_str + ".json"
-    csv_filename = timestamp_str + ".csv"
-    cost_filename = timestamp_str + "_costs.csv"
     output_path = os.path.join(output_dir, output_filename)
-    csv_path = os.path.join(output_dir, csv_filename)
-    cost_path = os.path.join(output_dir, cost_filename)
 
     lock = threading.Lock()
+    answer_queue = queue.Queue(maxsize=student_workers * 2)  # Limit queue size
     evaluator_executor = ThreadPoolExecutor(max_workers=evaluator_workers)
+    total_gen_cost = initial_gen_cost
+    total_eval_cost = initial_eval_cost
 
-    def process_question(question_data):
-        q_id = question_data["question_id"]
+    # Two progress bars: one for generation, one for evaluation
+    gen_pbar = tqdm(total=len(all_questions), desc="Generating answers", position=0)
+    eval_pbar = tqdm(total=len(all_questions), desc="Evaluating answers", position=1)
 
-        if q_id in cache:
-            result = cache[q_id]
-            usage_records = []
-        else:
-            result, usage_records = evaluate_question(
-                question_data,
-                student_model,
-                evaluator_models,
-                prompt_template,
-                evaluator_executor,
-                student_prompt_template,
+    generation_complete = threading.Event()
+
+    # Producer: Generate answers
+    def answer_producer():
+        # Type 2: Resume - Add unevaluated answers from current run to queue
+        # These need evaluation but generation is already done
+        for q_id, answer_info in unevaluated_map.items():
+            # Find the question_data
+            question_data = next(
+                (q for q in all_questions if q["question_id"] == q_id), None
             )
-            result["question_id"] = q_id
-            result["source_file"] = question_data.get("source_file")
+            if question_data:
+                answer_queue.put(
+                    {
+                        "question_data": question_data,
+                        "student_answer": answer_info["student_answer"],
+                        "usage_records": [],  # Already saved in DB
+                        "error": None,
+                        "resume": True,  # Flag: skip generation, needs evaluation
+                    }
+                )
+                with lock:
+                    gen_pbar.update(1)  # Generation was already done
 
-        with lock:
-            results.append(result)
+        # Type 1: Cross-run cache - Add fully evaluated results from previous runs
+        # These skip both generation AND evaluation
+        for question_data in all_questions:
+            q_id = question_data["question_id"]
+            if q_id in cross_run_cache:
+                answer_queue.put(
+                    {
+                        "question_data": question_data,
+                        "cross_run_cached": True,  # Flag: skip both generation and evaluation
+                        "cached_result": cross_run_cache[q_id],
+                    }
+                )
+                with lock:
+                    gen_pbar.update(1)  # Generation was already done in previous run
+                    eval_pbar.update(1)  # Evaluation was already done in previous run
 
-            # Track costs
-            for usage in usage_records:
-                usage["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                usage["question_source"] = result.get("source_file", "")
-                cost_records.append(usage)
+        # New questions: Generate fresh answers
+        with ThreadPoolExecutor(max_workers=student_workers) as gen_executor:
+            futures = []
+            for question_data in all_questions:
+                q_id = question_data["question_id"]
+                # Only generate if not in cross-run cache and not already generated in current run
+                if q_id not in cross_run_cache and q_id not in unevaluated_map:
+                    # Submit for generation
+                    future = gen_executor.submit(
+                        generate_answer,
+                        question_data,
+                        student_model,
+                        student_prompt_template,
+                    )
+                    futures.append(future)
 
-            # Extract scores for CSV
-            if "evaluations" in result and isinstance(result["evaluations"], dict):
-                for eval_model_name, eval_data in result["evaluations"].items():
-                    if isinstance(eval_data, dict):
-                        record = {
-                            "question": result.get("question", "")[:100] + "...",
-                            "source_file": result.get("source_file", ""),
-                            "evaluator": eval_model_name,
-                            "correctness": eval_data.get("Correctness"),
-                            "completeness": eval_data.get("Completeness"),
-                            "clarity": eval_data.get("Clarity"),
-                            "overall_score": eval_data.get("Overall_Score"),
-                        }
-                        score_records.append(record)
+            # Collect results and put in queue
+            for future in as_completed(futures):
+                answer_data = future.result()
 
-            # Save intermediate results to JSON
-            with open(output_path, "w") as f:
-                json.dump(results, f, indent=4)
+                # Save to DB immediately for resume capability
+                if not answer_data.get("error"):
+                    q_id = answer_data["question_data"]["question_id"]
+                    student_answer = answer_data["student_answer"]
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    cost = sum(u.get("cost", 0.0) for u in answer_data["usage_records"])
+                    
+                    # Protect database writes with lock for thread-safety
+                    with lock:
+                        db.save_student_answer(
+                            run_id, q_id, student_answer, cost, timestamp
+                        )
+                        total_gen_cost += cost
 
-            # Save intermediate results to CSV
-            if score_records:
-                pd.DataFrame(score_records).to_csv(csv_path, index=False)
+                answer_queue.put(answer_data)
+                with lock:
+                    gen_pbar.update(1)
+                    gen_pbar.set_postfix(gen_cost=f"${total_gen_cost:.4f}")
 
-            # Save intermediate costs to CSV
-            if cost_records:
-                pd.DataFrame(cost_records).to_csv(cost_path, index=False)
+        generation_complete.set()
+        console.print("[green]Answer generation complete![/green]")
 
-    with ThreadPoolExecutor(max_workers=student_workers) as student_executor:
-        list(
-            tqdm(
-                student_executor.map(process_question, all_questions),
-                total=len(all_questions),
-                desc="Evaluating questions",
-            )
-        )
+    # Consumer: Evaluate answers
+    def process_from_queue():
+        nonlocal total_gen_cost, total_eval_cost
 
+        while not (generation_complete.is_set() and answer_queue.empty()):
+            try:
+                answer_data = answer_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+
+            question_data = answer_data["question_data"]
+            q_id = question_data["question_id"]
+
+            # Type 1: Cross-run cached - Already fully evaluated in previous run
+            if answer_data.get("cross_run_cached"):
+                result = answer_data["cached_result"]
+                result["question"] = question_data.get("question")
+                result["original_answer"] = question_data.get("solution")
+                result["source_file"] = question_data.get("source_file")
+                usage_records = []
+                # No evaluation needed - just use cached result
+            else:
+                # Type 2: Resume OR New question - Need evaluation
+                result, usage_records = evaluate_answer(
+                    answer_data,
+                    evaluator_models,
+                    prompt_template,
+                    evaluator_executor,
+                )
+                result["question_id"] = q_id
+                result["source_file"] = question_data.get("source_file")
+
+            # CRITICAL SECTION: All shared state modifications in ONE lock for 100% thread-safety
+            with lock:
+                # 1. Add result to shared list
+                results.append(result)
+
+                # 2. Track costs and save to DB
+                for usage in usage_records:
+                    role = usage.get("role")
+                    cost = usage.get("cost", 0.0)
+                    if role == "student":
+                        total_gen_cost += cost
+                    elif role == "evaluator":
+                        total_eval_cost += cost
+
+                    usage["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    usage["question_source"] = result.get("source_file", "")
+
+                    db.add_cost(
+                        run_id,
+                        q_id,
+                        usage.get("model"),
+                        usage.get("role"),
+                        usage.get("prompt_tokens"),
+                        usage.get("completion_tokens"),
+                        usage.get("total_tokens"),
+                        usage.get("cost"),
+                        usage.get("timestamp"),
+                    )
+
+                # 3. Extract scores and save evaluations to DB
+                if "evaluations" in result and isinstance(result["evaluations"], dict):
+                    for eval_model_name, eval_info in result["evaluations"].items():
+                        if isinstance(eval_info, dict):
+                            eval_data = eval_info.get("result")
+                            eval_cost = eval_info.get("cost", 0.0)
+                            if isinstance(eval_data, dict):
+                                db.add_evaluation(
+                                    run_id,
+                                    q_id,
+                                    eval_model_name,
+                                    result.get("student_answer"),
+                                    eval_data.get("Correctness"),
+                                    eval_data.get("Completeness"),
+                                    eval_data.get("Clarity"),
+                                    eval_data.get("Overall_Score"),
+                                    eval_cost,
+                                    eval_data,
+                                )
+
+                # 4. Mark answer as evaluated
+                if not answer_data.get("cross_run_cached"):
+                    db.mark_answer_evaluated(run_id, q_id)
+
+                # 5. Update progress bar
+                eval_pbar.update(1)
+                eval_pbar.set_postfix(eval_cost=f"${total_eval_cost:.4f}")
+
+                # 6. Save intermediate results to JSON
+                with open(output_path, "w") as f:
+                    json.dump(results, f, indent=4)
+
+            answer_queue.task_done()
+
+    # Start producer thread
+    producer_thread = threading.Thread(target=answer_producer, daemon=True)
+    producer_thread.start()
+
+    # Start consumer threads
+    consumer_threads = []
+    for _ in range(min(evaluator_workers, len(all_questions))):
+        t = threading.Thread(target=process_from_queue, daemon=True)
+        t.start()
+        consumer_threads.append(t)
+
+    # Wait for completion
+    producer_thread.join()
+    for t in consumer_threads:
+        t.join()
+
+    gen_pbar.close()
+    eval_pbar.close()
     evaluator_executor.shutdown(wait=True)
 
     console.print(
         f"[bold green]Benchmarking complete! Results saved to {output_dir}[/bold green]"
     )
     console.print(f"JSON: {output_path}")
-    console.print(f"Scores CSV: {csv_path}")
-    console.print(f"Costs CSV: {cost_path}")
+
+    # Display Summary
+    console.print("\n[bold blue]Run Summary:[/bold blue]")
+    summary = db.get_run_summary(run_id)
+    summary_df = pd.DataFrame(
+        summary,
+        columns=[
+            "Evaluator",
+            "Total Questions",
+            "Avg Correctness",
+            "Avg Completeness",
+            "Avg Clarity",
+            "Avg Overall Score",
+            "Total Evaluator Cost",
+        ],
+    )
+    console.print(summary_df)
+
+    console.print("\n[bold blue]Cost Summary:[/bold blue]")
+    costs = db.get_total_costs(run_id)
+    costs_df = pd.DataFrame(
+        costs,
+        columns=["Model", "Role", "Prompt Tokens", "Completion Tokens", "Total Cost"],
+    )
+    console.print(costs_df)
 
 
 if __name__ == "__main__":

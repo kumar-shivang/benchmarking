@@ -43,6 +43,9 @@ class LLM:
         payload = {
             "model": self.model_name,
             "messages": messages,
+            "provider": {
+                "sort": "throughput",
+            },
         }
         response = requests.post(
             f"{self.base_url}/chat/completions",
