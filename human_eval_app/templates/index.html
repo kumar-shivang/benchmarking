@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Human Evaluation App</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f0f2f5;
+            font-family: 'Inter', -apple-system, sans-serif;
+        }
+
+        .container {
+            max-width: 1100px;
+        }
+
+        .hero-section {
+            background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+            color: white;
+            padding: 80px 0;
+            border-radius: 0 0 50px 50px;
+            margin-bottom: 50px;
+            box-shadow: 0 10px 30px rgba(13, 110, 253, 0.2);
+        }
+
+        .card {
+            border: none;
+            border-radius: 20px;
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+
+        .card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+        }
+
+        .card-icon {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            display: inline-block;
+            padding: 20px;
+            border-radius: 50%;
+            background: #f8f9fa;
+        }
+
+        .btn-custom {
+            border-radius: 12px;
+            padding: 12px 30px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-transparent position-absolute w-100">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">📊 EVAL DASHBOARD</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/evaluate">Evaluate</a>
+                <a class="nav-link" href="/browse">Browse</a>
+                <a class="nav-link" href="/stats">Stats</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="hero-section text-center">
+        <div class="container">
+            <h1 class="display-3 fw-bold mb-3">Human Evaluation Portal</h1>
+            <p class="lead mb-4 opacity-75">Benchmarking LLM performance through expert human review</p>
+
+            <div class="row justify-content-center">
+                <div class="col-md-6">
+                    <div class="card p-3 shadow-sm"
+                        style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(10px);">
+                        <form action="/set_evaluator" method="POST" class="d-flex gap-2">
+                            <input type="text" name="evaluator_name" class="form-control form-control-lg"
+                                placeholder="Enter your name..." value="{{ session.get('evaluator_name', '') }}"
+                                required>
+                            <button type="submit" class="btn btn-light btn-lg fw-bold px-4">Save</button>
+                        </form>
+                        {% if session.get('evaluator_name') %}
+                        <div class="mt-2 small text-white-50">
+                            Welcome back, <strong>{{ session.get('evaluator_name') }}</strong>!
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="row g-4">
+            <div class="col-md-4">
+                <div class="card h-100 text-center p-4">
+                    <div class="card-body">
+                        <div class="card-icon">🎯</div>
+                        <h3 class="card-title fw-bold">Evaluate</h3>
+                        <p class="text-muted mb-4">Review LLM-generated answers and provide detailed scores based on
+                            correctness, completeness, and clarity.</p>
+                        <a href="/evaluate" class="btn btn-primary btn-custom w-100">Start Review</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 text-center p-4">
+                    <div class="card-body">
+                        <div class="card-icon">🔍</div>
+                        <h3 class="card-title fw-bold">Browse</h3>
+                        <p class="text-muted mb-4">Explore the full dataset of questions, reference solutions, and
+                            historical model responses.</p>
+                        <a href="/browse" class="btn btn-outline-primary btn-custom w-100">Explore Data</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 text-center p-4">
+                    <div class="card-body">
+                        <div class="card-icon">📈</div>
+                        <h3 class="card-title fw-bold">Analytics</h3>
+                        <p class="text-muted mb-4">Visualize performance metrics, average scores, and evaluation
+                            progress across all models.</p>
+                        <a href="/stats" class="btn btn-dark btn-custom w-100">View Stats</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4 mt-2">
+            <div class="col-md-12">
+                <div class="card text-center p-4 border-success"
+                    style="border: 2px dashed #198754; background-color: #f8fff9;">
+                    <div class="card-body">
+                        <h3 class="card-title fw-bold text-success">📤 Export Your Work</h3>
+                        <p class="text-muted mb-4">Once you have finished evaluating, click the button below to download
+                            your evaluations as a CSV file. Send this file back to the administrator.</p>
+                        <a href="/export" class="btn btn-success btn-custom">Download Evaluations (CSV)</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-5 text-center text-muted">
+            <p>Data synced from source database. All evaluations are stored in <code>human_eval.db</code></p>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

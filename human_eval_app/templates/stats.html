@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Statistics</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Inter', -apple-system, sans-serif; }
+        .container { max-width: 1000px; }
+        .stat-card { 
+            text-align: center; 
+            padding: 40px 20px;
+            border-radius: 24px;
+            color: white;
+            transition: all 0.3s ease;
+            border: none;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+        }
+        .stat-card:hover { transform: translateY(-5px); box-shadow: 0 15px 30px rgba(0,0,0,0.1); }
+        .stat-value { font-size: 3.5em; font-weight: 800; line-height: 1; margin-bottom: 10px; }
+        .stat-label { font-size: 1rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; opacity: 0.9; }
+        
+        .bg-gradient-primary { background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); }
+        .bg-gradient-success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+        .bg-gradient-info { background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%); }
+        
+        .card { border: none; border-radius: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        .progress { height: 12px; border-radius: 6px; background-color: #e2e8f0; }
+        .progress-bar { border-radius: 6px; }
+        
+        .score-label { font-weight: 600; color: #475569; margin-bottom: 8px; display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-5">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">📊 EVAL DASHBOARD</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/evaluate">Evaluate</a>
+                <a class="nav-link" href="/browse">Browse</a>
+                <a class="nav-link active" href="/stats">Stats</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-end mb-5">
+            <div>
+                <h1 class="fw-bold mb-0">Performance Analytics</h1>
+                <p class="text-muted">Real-time metrics from human evaluation sessions</p>
+            </div>
+            <a href="/export" class="btn btn-primary px-4 py-2 rounded-pill fw-bold">
+                📥 Export CSV
+            </a>
+        </div>
+
+        <div class="row g-4 mb-5">
+            <div class="col-md-4">
+                <div class="stat-card bg-gradient-primary">
+                    <div class="stat-value">{{ total_evaluations }}</div>
+                    <div class="stat-label">Total Reviews</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="stat-card bg-gradient-success">
+                    <div class="stat-value">{{ total_answers }}</div>
+                    <div class="stat-label">Total Answers</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="stat-card bg-gradient-info">
+                    <div class="stat-value">{{ evaluated }}</div>
+                    <div class="stat-label">Completed</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-md-6">
+                <div class="card h-100 p-4">
+                    <h5 class="fw-bold mb-4">Completion Progress</h5>
+                    {% if total_answers > 0 %}
+                        {% set progress = (evaluated / total_answers * 100) | round(1) %}
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="fw-bold">{{ progress }}% Complete</span>
+                            <span class="text-muted">{{ evaluated }} / {{ total_answers }}</span>
+                        </div>
+                        <div class="progress mb-4">
+                            <div class="progress-bar bg-primary" style="width: {{ progress }}%"></div>
+                        </div>
+                        <p class="small text-muted">This shows the percentage of LLM-generated answers that have received at least one human evaluation.</p>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <p class="text-muted">No data available to track progress.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card h-100 p-4">
+                    <h5 class="fw-bold mb-4">Average Quality Scores</h5>
+                    
+                    <div class="mb-4">
+                        <div class="score-label">
+                            <span>Correctness</span>
+                            <span>{{ "%.1f"|format(avg_correctness) }}/10</span>
+                        </div>
+                        <div class="progress">
+                            <div class="progress-bar bg-primary" style="width: {{ (avg_correctness / 10 * 100) | round }}%"></div>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <div class="score-label">
+                            <span>Completeness</span>
+                            <span>{{ "%.1f"|format(avg_completeness) }}/10</span>
+                        </div>
+                        <div class="progress">
+                            <div class="progress-bar bg-success" style="width: {{ (avg_completeness / 10 * 100) | round }}%"></div>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <div class="score-label">
+                            <span>Clarity</span>
+                            <span>{{ "%.1f"|format(avg_clarity) }}/10</span>
+                        </div>
+                        <div class="progress">
+                            <div class="progress-bar bg-info" style="width: {{ (avg_clarity / 10 * 100) | round }}%"></div>
+                        </div>
+                    </div>
+
+                    <div class="mb-0">
+                        <div class="score-label">
+                            <span>Overall Quality</span>
+                            <span>{{ "%.1f"|format(avg_overall) }}/10</span>
+                        </div>
+                        <div class="progress">
+                            <div class="progress-bar bg-warning" style="width: {{ (avg_overall / 10 * 100) | round }}%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

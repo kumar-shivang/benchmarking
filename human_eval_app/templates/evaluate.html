@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evaluate Answer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <style>
+        body,
+        html {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            background-color: #f8f9fa;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .navbar {
+            flex-shrink: 0;
+        }
+
+        .main-wrapper {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .sidebar {
+            width: 450px;
+            overflow-y: auto;
+            border-left: 1px solid #dee2e6;
+            background: #fff;
+            padding: 20px;
+            box-shadow: -2px 0 5px rgba(0, 0, 0, 0.05);
+        }
+
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .markdown-content {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .markdown-content img {
+            max-width: 100%;
+            height: auto;
+        }
+
+        .markdown-content pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+
+        .markdown-content code {
+            background: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .slider-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            min-width: 40px;
+            text-align: center;
+        }
+
+        .score-high {
+            color: #28a745;
+        }
+
+        .score-med {
+            color: #ffc107;
+        }
+
+        .score-low {
+            color: #dc3545;
+        }
+
+        .markdown-content h1,
+        .markdown-content h2,
+        .markdown-content h3 {
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+
+        .markdown-content a {
+            color: #0d6efd;
+            text-decoration: none;
+        }
+
+        .markdown-content a:hover {
+            text-decoration: underline;
+        }
+
+        .markdown-content blockquote {
+            border-left: 4px solid #dee2e6;
+            padding-left: 15px;
+            color: #6c757d;
+            font-style: italic;
+        }
+
+        .markdown-content ul,
+        .markdown-content ol {
+            margin-bottom: 15px;
+        }
+
+        .markdown-content li {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid px-4">
+            <a class="navbar-brand" href="/">📊 Human Evaluation App</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/">Home</a>
+                <a class="nav-link" href="/evaluate">Evaluate</a>
+                <a class="nav-link" href="/browse">Browse</a>
+                <a class="nav-link" href="/stats">Stats</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="main-wrapper">
+        <!-- Main Content Area: Question, Solution, Student Answer -->
+        <div class="content-area">
+            <div class="container-fluid">
+                <div class="row">
+                    <div class="col-12">
+                        <div class="card">
+                            <div
+                                class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">📝 Question</h5>
+                                <span class="badge bg-light text-primary">{{ question.source_file }}</span>
+                            </div>
+                            <div class="card-body">
+                                <div class="markdown-content" id="question-text">
+                                    {{ question.question_text | default('N/A') }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header bg-success text-white">
+                                <h5 class="mb-0">✅ Solution / Reference Answer</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="markdown-content" id="solution-text">
+                                    {{ question.solution | default('N/A') }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header bg-info text-white">
+                                <h5 class="mb-0">🤖 LLM Student Answer ({{ run.student_model }})</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="markdown-content" id="student-answer-text">
+                                    {{ answer.student_answer | default('N/A') }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar: Evaluation Form -->
+        <div class="sidebar">
+            <h4 class="mb-4">⭐ Human Evaluation</h4>
+            <form method="POST">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Evaluator Name</label>
+                    <input type="text" name="evaluator_name" class="form-control" placeholder="Enter your name"
+                        value="{{ session.get('evaluator_name', '') }}">
+                </div>
+
+                <hr>
+
+                <div class="mb-4">
+                    <label class="form-label fw-bold">1. Correctness (1-10)</label>
+                    <div class="slider-container mb-2">
+                        <input type="range" class="form-range" min="1" max="10" value="5" name="correctness"
+                            id="correctness" oninput="updateSlider(this, 'correctness-val')">
+                        <span class="slider-value" id="correctness-val">5</span>
+                    </div>
+                    <textarea name="correctness_explanation" class="form-control" rows="2"
+                        placeholder="Explain correctness score..."></textarea>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label fw-bold">2. Completeness (1-10)</label>
+                    <div class="slider-container mb-2">
+                        <input type="range" class="form-range" min="1" max="10" value="5" name="completeness"
+                            id="completeness" oninput="updateSlider(this, 'completeness-val')">
+                        <span class="slider-value" id="completeness-val">5</span>
+                    </div>
+                    <textarea name="completeness_explanation" class="form-control" rows="2"
+                        placeholder="Explain completeness score..."></textarea>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label fw-bold">3. Clarity (1-10)</label>
+                    <div class="slider-container mb-2">
+                        <input type="range" class="form-range" min="1" max="10" value="5" name="clarity" id="clarity"
+                            oninput="updateSlider(this, 'clarity-val')">
+                        <span class="slider-value" id="clarity-val">5</span>
+                    </div>
+                    <textarea name="clarity_explanation" class="form-control" rows="2"
+                        placeholder="Explain clarity score..."></textarea>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label fw-bold">4. Overall Score (0-10)</label>
+                    <div class="slider-container mb-2">
+                        <input type="range" class="form-range" min="0" max="10" step="0.5" value="5"
+                            name="overall_score" id="overall_score" oninput="updateSlider(this, 'overall_score-val')">
+                        <span class="slider-value" id="overall_score-val">5</span>
+                    </div>
+                    <textarea name="overall_explanation" class="form-control" rows="2"
+                        placeholder="Overall explanation..."></textarea>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">General Reasoning / Remarks</label>
+                    <textarea name="reasoning" class="form-control" rows="4"
+                        placeholder="Detailed step-by-step comparison and thought process..."></textarea>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-lg w-100 shadow mb-4">
+                    🚀 Submit Evaluation
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Configure marked options
+        marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+
+        // Function to render markdown and math
+        function renderMarkdown(elementId) {
+            const element = document.getElementById(elementId);
+            if (!element) return;
+
+            let rawText = element.textContent.trim();
+
+            // If it looks like LaTeX but has no delimiters, wrap it
+            if (rawText.includes('\\') && !rawText.includes('$') && !rawText.includes('\\(') && !rawText.includes('\\[')) {
+                rawText = '$$' + rawText + '$$';
+            }
+
+            // Protect math blocks from marked.js
+            const mathBlocks = [];
+            const placeholderPrefix = '@@MATH_PLACEHOLDER_';
+
+            // Regex to find $$, $, \[, \( blocks
+            const mathRegex = /(\$\$[\s\S]+?\$\$|\$[\s\S]+?\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\))/g;
+
+            let textWithPlaceholders = rawText.replace(mathRegex, function (match) {
+                mathBlocks.push(match);
+                return placeholderPrefix + (mathBlocks.length - 1) + '@@';
+            });
+
+            const htmlContent = marked.parse(textWithPlaceholders);
+
+            // Restore math blocks and escape them for safe innerHTML insertion
+            let finalHtml = htmlContent.replace(new RegExp(placeholderPrefix + '(\\d+)@@', 'g'), function (match, index) {
+                const block = mathBlocks[parseInt(index)];
+                return block.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            });
+
+            element.innerHTML = finalHtml;
+
+            // Render math expressions with KaTeX
+            renderMathInElement(element, {
+                delimiters: [
+                    { left: '$$', right: '$$', display: true },
+                    { left: '$', right: '$', display: false },
+                    { left: '\\[', right: '\\]', display: true },
+                    { left: '\\(', right: '\\)', display: false }
+                ],
+                throwOnError: false
+            });
+        }
+
+        // Render markdown and math on page load
+        document.addEventListener('DOMContentLoaded', function () {
+            renderMarkdown('question-text');
+            renderMarkdown('solution-text');
+            renderMarkdown('student-answer-text');
+
+            // Initialize sliders
+            document.querySelectorAll('input[type="range"]').forEach(slider => {
+                updateSlider(slider, slider.id + '-val');
+            });
+        });
+
+        function updateSlider(slider, valueId) {
+            const value = slider.value;
+            const valueEl = document.getElementById(valueId);
+            if (!valueEl) return;
+
+            valueEl.textContent = value;
+
+            // Color coding
+            if (value >= 7) {
+                valueEl.className = 'slider-value score-high';
+            } else if (value >= 4) {
+                valueEl.className = 'slider-value score-med';
+            } else {
+                valueEl.className = 'slider-value score-low';
+            }
+        }
+    </script>
+</body>
+
+</html>

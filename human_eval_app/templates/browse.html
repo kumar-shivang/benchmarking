@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browse Questions</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+
+        .container {
+            max-width: 1200px;
+        }
+
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .question-card {
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .question-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .markdown-content {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+
+        .markdown-content img {
+            max-width: 100%;
+            height: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="/">📊 Human Evaluation App</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/evaluate">Evaluate Answers</a>
+                <a class="nav-link active" href="/browse">Browse Questions</a>
+                <a class="nav-link" href="/stats">Statistics</a>
+                <a class="nav-link" href="/export">Export CSV</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h2 class="mb-4">All Questions</h2>
+
+        <!-- Filters -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="GET" action="/browse" class="row g-3">
+                    <div class="col-md-10">
+                        <label for="source_file" class="form-label">Filter by Source File</label>
+                        <select name="source_file" id="source_file" class="form-select">
+                            <option value="all">All Sources</option>
+                            {% for source in sources %}
+                            <option value="{{ source }}" {% if selected_source==source %}selected{% endif %}>{{ source
+                                }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">Filter</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        {% if questions %}
+        {% set current_source = namespace(value=None) %}
+        {% for question in questions %}
+        {% if question.source_file != current_source.value %}
+        {% set current_source.value = question.source_file %}
+        <h4 class="mt-4 mb-3 text-primary border-bottom pb-2">📂 Source: {{ question.source_file or 'Unknown' }}</h4>
+        {% endif %}
+
+        <div class="list-group mb-2">
+            <a href="/question/{{ question.id }}" class="list-group-item list-group-item-action question-card">
+                <div class="d-flex w-100 justify-content-between">
+                    <h6 class="mb-1 fw-bold">{{ question.id }}</h6>
+                    <small class="text-primary">View Details →</small>
+                </div>
+                <div class="mb-1 text-muted small render-markdown" data-raw="{{ question.question_text[:200] }}">
+                    {{ question.question_text[:200] }}...
+                </div>
+            </a>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="alert alert-warning">
+            No questions found. Please ensure the database is populated.
+        </div>
+        {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Configure marked options
+        marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+
+        // Function to render markdown and math
+        function renderMarkdown(element) {
+            if (!element) return;
+
+            let rawText = element.textContent.trim();
+
+            // If it looks like LaTeX but has no delimiters, wrap it
+            if (rawText.includes('\\') && !rawText.includes('$') && !rawText.includes('\\(') && !rawText.includes('\\[')) {
+                rawText = '$$' + rawText + '$$';
+            }
+
+            // Protect math blocks from marked.js
+            const mathBlocks = [];
+            const placeholderPrefix = '@@MATH_PLACEHOLDER_';
+
+            // Regex to find $$, $, \[, \( blocks
+            const mathRegex = /(\$\$[\s\S]+?\$\$|\$[\s\S]+?\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\))/g;
+
+            let textWithPlaceholders = rawText.replace(mathRegex, function (match) {
+                mathBlocks.push(match);
+                return placeholderPrefix + (mathBlocks.length - 1) + '@@';
+            });
+
+            const htmlContent = marked.parse(textWithPlaceholders);
+
+            // Restore math blocks and escape them for safe innerHTML insertion
+            let finalHtml = htmlContent.replace(new RegExp(placeholderPrefix + '(\\d+)@@', 'g'), function (match, index) {
+                const block = mathBlocks[parseInt(index)];
+                return block.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            });
+
+            element.innerHTML = finalHtml;
+
+            // Render math expressions with KaTeX
+            renderMathInElement(element, {
+                delimiters: [
+                    { left: '$$', right: '$$', display: true },
+                    { left: '$', right: '$', display: false },
+                    { left: '\\[', right: '\\]', display: true },
+                    { left: '\\(', right: '\\)', display: false }
+                ],
+                throwOnError: false
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            document.querySelectorAll('.render-markdown').forEach(el => {
+                renderMarkdown(el);
+            });
+        });
+    </script>
+</body>
+
+</html>

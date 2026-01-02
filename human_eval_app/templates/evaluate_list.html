@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evaluate Answers</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+
+        .container {
+            max-width: 1200px;
+        }
+
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="/">📊 Human Evaluation App</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link active" href="/evaluate">Evaluate Answers</a>
+                <a class="nav-link" href="/browse">Browse Questions</a>
+                <a class="nav-link" href="/stats">Statistics</a>
+                <a class="nav-link" href="/export">Export CSV</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="mb-0">Student Answers</h2>
+            <a href="/export" class="btn btn-success">
+                <i class="bi bi-download"></i> Export Evaluations to CSV
+            </a>
+        </div>
+
+        <!-- Filters -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="GET" action="/evaluate" class="row g-3">
+                    <div class="col-md-4">
+                        <label for="source_file" class="form-label">Source File</label>
+                        <select name="source_file" id="source_file" class="form-select">
+                            <option value="all">All Sources</option>
+                            {% for source in sources %}
+                            <option value="{{ source }}" {% if selected_source==source %}selected{% endif %}>{{ source
+                                }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="model_name" class="form-label">Model Name</label>
+                        <select name="model_name" id="model_name" class="form-select">
+                            <option value="all">All Models</option>
+                            {% for model in models %}
+                            <option value="{{ model }}" {% if selected_model==model %}selected{% endif %}>{{ model }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="status" class="form-label">Status</label>
+                        <select name="status" id="status" class="form-select">
+                            <option value="all" {% if selected_status=='all' %}selected{% endif %}>All</option>
+                            <option value="pending" {% if selected_status=='pending' %}selected{% endif %}>Pending
+                            </option>
+                            <option value="evaluated" {% if selected_status=='evaluated' %}selected{% endif %}>Evaluated
+                            </option>
+                        </select>
+                    </div>
+                    <div class="col-md-1 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">Filter</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        {% if questions %}
+        {% for qid, qdata in questions.items() %}
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div class="w-75">
+                    <strong>Question:</strong>
+                    <div class="render-markdown small text-muted mt-1" style="max-height: 100px; overflow: hidden;">
+                        {{ qdata.text[:200] }}...
+                    </div>
+                    <small class="text-muted">Source: {{ qdata.source }}</small>
+                </div>
+                <span class="badge bg-secondary">{{ qdata.answers|length }} Answers</span>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% for ans in qdata.answers %}
+                    <div class="col-md-4 mb-3">
+                        <div class="card {% if ans.evaluated %}border-success{% else %}bg-light{% endif %} h-100">
+                            <div class="card-body d-flex flex-column">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <h6 class="card-title mb-0">{{ ans.model }}</h6>
+                                    {% if ans.evaluated %}
+                                    <span class="badge bg-success">Evaluated</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">Pending</span>
+                                    {% endif %}
+                                </div>
+                                <p class="card-text small text-muted flex-grow-1">
+                                    {{ ans.timestamp[:19] }}
+                                </p>
+                                <a href="/evaluate/{{ ans.id }}"
+                                    class="btn {% if ans.evaluated %}btn-outline-success{% else %}btn-primary{% endif %} btn-sm w-100">
+                                    {% if ans.evaluated %}View / Re-evaluate{% else %}Evaluate Now{% endif %}
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="alert alert-info">
+            <h4>🎉 All caught up!</h4>
+            <p>No pending answers to evaluate.</p>
+            <a href="/browse" class="btn btn-outline-primary">Browse Questions</a>
+        </div>
+        {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Configure marked options
+        marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+
+        // Function to render markdown and math
+        function renderMarkdown(element) {
+            if (!element) return;
+
+            let rawText = element.textContent.trim();
+
+            // If it looks like LaTeX but has no delimiters, wrap it
+            if (rawText.includes('\\') && !rawText.includes('$') && !rawText.includes('\\(') && !rawText.includes('\\[')) {
+                rawText = '$$' + rawText + '$$';
+            }
+
+            // Protect math blocks from marked.js
+            const mathBlocks = [];
+            const placeholderPrefix = '@@MATH_PLACEHOLDER_';
+
+            // Regex to find $$, $, \[, \( blocks
+            const mathRegex = /(\$\$[\s\S]+?\$\$|\$[\s\S]+?\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\))/g;
+
+            let textWithPlaceholders = rawText.replace(mathRegex, function (match) {
+                mathBlocks.push(match);
+                return placeholderPrefix + (mathBlocks.length - 1) + '@@';
+            });
+
+            const htmlContent = marked.parse(textWithPlaceholders);
+
+            // Restore math blocks and escape them for safe innerHTML insertion
+            let finalHtml = htmlContent.replace(new RegExp(placeholderPrefix + '(\\d+)@@', 'g'), function (match, index) {
+                const block = mathBlocks[parseInt(index)];
+                return block.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            });
+
+            element.innerHTML = finalHtml;
+
+            // Render math expressions with KaTeX
+            renderMathInElement(element, {
+                delimiters: [
+                    { left: '$$', right: '$$', display: true },
+                    { left: '$', right: '$', display: false },
+                    { left: '\\[', right: '\\]', display: true },
+                    { left: '\\(', right: '\\)', display: false }
+                ],
+                throwOnError: false
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            document.querySelectorAll('.render-markdown').forEach(el => {
+                renderMarkdown(el);
+            });
+        });
+    </script>
+</body>
+
+</html>
