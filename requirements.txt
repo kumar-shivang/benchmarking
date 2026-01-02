@@ -1,0 +1,11 @@
+sqlalchemy>=2.0.0
+pandas
+click
+tqdm
+rich
+streamlit
+python-dotenv
+requests
+psycopg2-binary
+flask>=2.0.0
+flask-sqlalchemy>=3.0.0
