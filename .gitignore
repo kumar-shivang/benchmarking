@@ -6,3 +6,7 @@ benchmarking_data/
 benchmarking/
 .env
 benchmarking.db
+temp/
+*.json
+logs/
+*.log
