@@ -17,7 +17,7 @@ This project provides a scalable framework to:
 - **Multi-Model Support**: Uses OpenRouter API to access 100+ LLMs
 - **Parallel Processing**: Concurrent answer generation and evaluation with thread pooling
 - **Robust Error Handling**: Authentication errors, API failures, and rate limiting management
-- **Database Persistence**: SQLite database for storing questions, answers, evaluations, and costs
+- **Database Persistence**: PostgreSQL or SQLite database for storing questions, answers, evaluations, and costs
 - **Resume Capability**: Continue interrupted benchmark runs from where they left off
 - **Cost Tracking**: Detailed token usage and cost analysis per model and role
 - **Interactive UI**: Streamlit web interface for manual testing and evaluation
@@ -35,7 +35,7 @@ benchmarking/
 ├── analyze.py                   # Performance analysis and reporting
 ├── student_prompt.md            # Prompt template for answer generation
 ├── evaluation_prompt.md         # Prompt template for evaluation
-├── benchmarking.db             # SQLite database (generated)
+├── benchmarking.db             # Database (PostgreSQL recommended, SQLite fallback)
 ├── benchmarking/               # Results directory
 │   └── <model_name>_<timestamp>/ # Individual benchmark run data
 └── benchmarking_data/          # Question datasets
@@ -73,7 +73,28 @@ benchmarking/
 
    ```env
    OPENROUTER_API_KEY=your_api_key_here
+   DATABASE_URL=postgresql://user:password@localhost:5432/benchmarking
    ```
+
+4. **Set up PostgreSQL database**
+
+   ```bash
+   # Install PostgreSQL (Ubuntu/Debian)
+   sudo apt-get install postgresql postgresql-contrib
+   
+   # Or on macOS with Homebrew
+   brew install postgresql
+   brew services start postgresql
+   
+   # Create database and user
+   sudo -u postgres psql
+   CREATE DATABASE benchmarking;
+   CREATE USER benchuser WITH PASSWORD 'your_password';
+   GRANT ALL PRIVILEGES ON DATABASE benchmarking TO benchuser;
+   \q
+   ```
+
+   **Note**: The system falls back to SQLite (`benchmarking.db`) if `DATABASE_URL` is not set, but PostgreSQL is recommended for parallel processing.
 
 ## Usage
 
@@ -200,7 +221,7 @@ The system tracks:
 1. **Question Loading**: Scan `benchmarking_data/` for JSON files
 2. **Answer Generation**: Student model generates solutions (parallel)
 3. **Evaluation**: Evaluator models score answers (parallel)
-4. **Storage**: Results saved to SQLite database
+4. **Storage**: Results saved to database (PostgreSQL for best concurrency)
 5. **Analysis**: Aggregate statistics and export reports
 
 ### Parallelization
