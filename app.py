@@ -4,9 +4,15 @@ import base64
 import os
 from llm import LLM
 from dotenv import load_dotenv
+from schemas import EVALUATION_SCHEMA
+from logger import setup_logger, log_exception, log_api_call
 
 # Load environment variables
 load_dotenv(override=True)
+
+# Setup logging for Streamlit app
+logger = setup_logger("streamlit_app", "logs")
+logger.info("Streamlit app started")
 
 st.set_page_config(page_title="LLM Evaluation Benchmarking", layout="wide")
 
@@ -72,36 +78,65 @@ try:
     if api_key:
         slave_model = LLM(slave_model_name)
         master_model = LLM(master_model_name)
+        logger.info(
+            f"Initialized models - Student: {slave_model_name}, Evaluator: {master_model_name}"
+        )
     else:
         st.sidebar.warning("Please provide an API Key.")
+        logger.warning("No API key provided")
         slave_model = None
         master_model = None
 except Exception as e:
     st.sidebar.error(f"Error initializing LLM: {e}")
+    log_exception(logger, e, "Initializing LLM models in Streamlit")
     slave_model = None
     master_model = None
 
 
 def generate_critique(question, student_answer, original_answer):
     try:
+        logger.debug("Generating critique for question")
         with open("evaluation_prompt.md", "r") as f:
             prompt_template = f.read()
+
+        # Ensure student_answer is a dict for formatting
+        # if isinstance(student_answer, str):
+        #     try:
+        #         student_answer = json.loads(student_answer)
+        #     except json.JSONDecodeError:
+        #         student_answer = {
+        #             "step_by_step_reasoning": "N/A",
+        #             "final_answer": student_answer,
+        #         }
 
         prompt = prompt_template.format(
             question=question, answer=student_answer, original_answer=original_answer
         )
     except Exception as e:
         st.error(f"Error reading evaluation_prompt.md: {e}")
+        log_exception(logger, e, "Reading evaluation prompt")
         # Fallback to a basic prompt if file reading fails
         prompt = f"Evaluate this answer. Question: {question}, Student: {student_answer}, Original: {original_answer}"
 
-    response = master_model.generate_response(
-        [
-            {"role": "system", "content": "You are an expert evaluator."},
-            {"role": "user", "content": prompt},
-        ]
-    )
-    return response
+    try:
+        response, usage = master_model.generate_response(
+            [
+                {"role": "system", "content": "You are an expert evaluator."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format=EVALUATION_SCHEMA,
+        )
+        log_api_call(
+            logger,
+            master_model.model_name,
+            "Generate critique",
+            success=True,
+            details=f"Cost: ${usage.get('cost', 0):.4f}",
+        )
+        return response
+    except Exception as e:
+        log_exception(logger, e, "Generating critique")
+        raise
 
 
 # Initialize session state for storing results
@@ -114,9 +149,13 @@ uploaded_file = st.file_uploader("Upload JSON File", type=["json"])
 if uploaded_file is not None:
     try:
         data = json.load(uploaded_file)
+        logger.info(
+            f"Loaded JSON file: {uploaded_file.name} with {len(data) if isinstance(data, list) else 1} items"
+        )
 
         if not isinstance(data, list):
             st.error("Invalid JSON format. Expected a list of objects.")
+            logger.error(f"Invalid JSON format in {uploaded_file.name}")
         else:
             st.success(f"Loaded {len(data)} items.")
 
@@ -157,27 +196,55 @@ if uploaded_file is not None:
                         if st.button(f"Generate Answer {i+1}", key=f"gen_{i}"):
                             if slave_model:
                                 with st.spinner("Generating Answer..."):
-                                    student_answer = slave_model.generate_response(
-                                        [
-                                            {
-                                                "role": "system",
-                                                "content": "Answer the question.",
-                                            },
-                                            {
-                                                "role": "user",
-                                                "content": item.get("question"),
-                                            },
-                                        ]
-                                    )
-                                    st.session_state.results[question_id][
-                                        "student_answer"
-                                    ] = student_answer
-                                    st.session_state.results[question_id][
-                                        "critique"
-                                    ] = None  # Reset critique if answer changes
+                                    try:
+                                        logger.info(
+                                            f"Generating answer for question {i+1}"
+                                        )
+                                        student_answer, usage = (
+                                            slave_model.generate_response(
+                                                [
+                                                    {
+                                                        "role": "system",
+                                                        "content": "Answer the question.",
+                                                    },
+                                                    {
+                                                        "role": "user",
+                                                        "content": item.get("question"),
+                                                    },
+                                                ],
+                                                # response_format=STUDENT_ANSWER_SCHEMA,
+                                            )
+                                        )
+                                        # try:
+                                        #     student_answer = json.loads(student_answer)
+                                        # except Exception:
+                                        #     pass
+                                        st.session_state.results[question_id][
+                                            "student_answer"
+                                        ] = student_answer
+                                        st.session_state.results[question_id][
+                                            "critique"
+                                        ] = None  # Reset critique if answer changes
+                                        log_api_call(
+                                            logger,
+                                            slave_model.model_name,
+                                            f"Generate answer {i+1}",
+                                            success=True,
+                                            details=f"Cost: ${usage.get('cost', 0):.4f}",
+                                        )
+                                    except Exception as e:
+                                        st.error(f"Error generating answer: {e}")
+                                        log_exception(
+                                            logger,
+                                            e,
+                                            f"Generating answer for question {i+1}",
+                                        )
                             else:
                                 st.error(
                                     "Slave LLM not initialized. Please check API Key."
+                                )
+                                logger.error(
+                                    "Attempted to generate answer without initialized slave model"
                                 )
 
                     with eval_col:
@@ -193,20 +260,35 @@ if uploaded_file is not None:
                         ):
                             if master_model:
                                 with st.spinner("Generating Critique..."):
-                                    student_answer = st.session_state.results[
-                                        question_id
-                                    ]["student_answer"]
-                                    critique = generate_critique(
-                                        item.get("question"),
-                                        student_answer,
-                                        item.get("solution"),
-                                    )
-                                    st.session_state.results[question_id][
-                                        "critique"
-                                    ] = critique
+                                    try:
+                                        logger.info(
+                                            f"Evaluating answer for question {i+1}"
+                                        )
+                                        student_answer = st.session_state.results[
+                                            question_id
+                                        ]["student_answer"]
+                                        critique = generate_critique(
+                                            item.get("question"),
+                                            student_answer,
+                                            item.get("solution"),
+                                        )
+                                        st.session_state.results[question_id][
+                                            "critique"
+                                        ] = critique
+                                        logger.info(
+                                            f"Successfully evaluated question {i+1}"
+                                        )
+                                    except Exception as e:
+                                        st.error(f"Error generating critique: {e}")
+                                        log_exception(
+                                            logger, e, f"Evaluating question {i+1}"
+                                        )
                             else:
                                 st.error(
                                     "Master LLM not initialized. Please check API Key."
+                                )
+                                logger.error(
+                                    "Attempted to evaluate without initialized master model"
                                 )
 
                     # Display results if they exist

@@ -5,6 +5,9 @@ from datetime import datetime
 from rich.console import Console
 from rich.table import Table
 from database import Database
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 console = Console()
 db = Database()
