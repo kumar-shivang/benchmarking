@@ -12,7 +12,7 @@ This guide provides instructions for human evaluators to set up and run the Flas
 ### 1. Clone the Repository (if not already done)
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/kumar-shivang/benchmarking
 cd benchmarking
 ```
 
